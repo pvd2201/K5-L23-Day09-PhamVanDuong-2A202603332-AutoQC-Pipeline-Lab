@@ -49,9 +49,9 @@ Hai điểm pipeline không bắt chắc:
 1. Box lỏng nhẹ hoặc sai khác mức mà model cũng có thể nhầm; calibration cho thấy `POSSIBLE_LOOSE_BOX` recall/thống kê còn thấp.
 2. Nhầm lớp, vật che khuất hoặc ảnh trùng biến đổi mạnh có thể vượt quy tắc máy; model checker chỉ là ý kiến thứ hai, không thay thế người duyệt.
 
-## 5. Train: raw vs clean (tùy chọn, chấm riêng)
+## 5. Train: Raw vs Clean (tùy chọn, chấm riêng)
 
-Thực nghiệm so sánh hai biến thể dữ liệu Raw và Clean bằng mô hình YOLO26n. Mỗi biến thể chạy với 2 seed (0 và 1), cùng cấu hình huấn luyện: 20 epochs, image size 640, batch size 16, sử dụng GPU Tesla T4. Hai biến thể được đánh giá trên cùng tập test gồm 100 ảnh và 387 đối tượng.
+Thực nghiệm so sánh hai biến thể dữ liệu Raw và Clean bằng mô hình YOLO26n. Mỗi biến thể chạy với 2 seed (0 và 1), cùng cấu hình huấn luyện: 20 epochs, image size 640, batch size 16, sử dụng GPU Tesla T4. Cả hai biến thể được đánh giá trên cùng tập test gồm 100 ảnh và 387 đối tượng.
 
 ### 5.1. Kết quả so sánh
 
@@ -60,9 +60,11 @@ Thực nghiệm so sánh hai biến thể dữ liệu Raw và Clean bằng mô h
 | Raw | 224 | 213 | 2 | 0.726 ± 0.000 | 0.512 ± 0.004 | 0.764 ± 0.061 | 0.649 ± 0.028 |
 | Clean | 193 | 193 | 2 | 0.730 ± 0.001 | 0.501 ± 0.001 | 0.800 ± 0.019 | 0.624 ± 0.012 |
 
-**Lưu ý về dữ liệu:** Raw có 224 ảnh trong thư mục nhưng quá trình kiểm tra dữ liệu của Ultralytics phát hiện 11 ảnh lỗi và bỏ qua chúng, nên thực tế sử dụng 213 ảnh để huấn luyện. Clean có 193 ảnh và cả 193 ảnh đều được sử dụng.
+**Lưu ý về dữ liệu:** Raw có 224 ảnh trong thư mục nhưng Ultralytics phát hiện 11 ảnh lỗi và bỏ qua chúng, nên thực tế sử dụng 213 ảnh để huấn luyện. Clean có 193 ảnh và cả 193 ảnh đều được sử dụng.
 
 ### 5.2. Biểu đồ so sánh
+
+Biểu đồ được lưu tại `submission/results/comparison.png`.
 
 ![Biểu đồ so sánh Raw và Clean](results/comparison.png)
 
@@ -76,6 +78,8 @@ Thực nghiệm so sánh hai biến thể dữ liệu Raw và Clean bằng mô h
 Kết quả cho thấy Clean có mAP50 và Precision nhỉnh hơn, trong khi Raw có mAP50-95 và Recall cao hơn. Vì vậy, chưa thể kết luận Clean tốt hơn Raw trên mọi tiêu chí. Chênh lệch mAP50 cũng tương đối nhỏ.
 
 Thực nghiệm chỉ sử dụng 2 seed và 20 epochs trên bộ dữ liệu có quy mô hạn chế, do đó kết quả mang tính tham khảo trong phạm vi bài lab, chưa đủ để khẳng định ưu thế tổng quát của một biến thể dữ liệu.
+
+
 
 ## 6. Quyết định và ghi chú AI
 Quyết định cuối là **Hold**. Hàng đợi có 121 ảnh: mô phỏng đã duyệt 80 ảnh, còn 41 ảnh chưa duyệt. Sáu ảnh thiếu file nhãn đã được duyệt và thay nhãn theo `06_review_log.csv`, nên không còn là việc chờ xử lý. Sau khi bỏ qua cảnh báo trên ảnh đã duyệt, gate vẫn tính 34/193 ảnh chưa duyệt còn cảnh báo (17.62%). Để đạt Release, cần xử lý đủ cảnh báo để còn tối đa 19/193 ảnh (dưới 10%) và không còn lỗi bắt buộc.
