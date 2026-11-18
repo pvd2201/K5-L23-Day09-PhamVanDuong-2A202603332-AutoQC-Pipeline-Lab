@@ -40,5 +40,77 @@ from ..model_cache import get_preds  # noqa: F401
 
 
 def run(ds, cfg, preds=None):
-    # TODO
-    raise NotImplementedError("check second_opinion chưa làm")
+    if preds is None:
+        preds = get_preds(ds, cfg, "checker")
+
+    sc = cfg["second_opinion"]
+    issues = []
+
+    for image in ds.image_files():
+        stem = image.stem
+        if stem not in preds or ds.label_path(stem).exists() is False:
+            continue
+
+        width_height = ds.image_size(stem)
+        width = width_height[0] if width_height else 1
+        height = width_height[1] if width_height else 1
+
+        predictions = []
+        fp_predictions = []
+        for pred in preds.get(stem, []):
+            cls, conf, cx, cy, w, h = pred
+            box = (cx, cy, w, h)
+            if conf >= sc["fp_conf"]:
+                fp_predictions.append((cls, conf, box))
+            area = w * width * h * height
+            if conf >= sc["conf"] and area >= sc["min_area_px"]:
+                predictions.append((cls, conf, box))
+
+        labels = ds.valid_boxes(stem)
+
+        for cls, conf, pred_box in predictions:
+            cands = [
+                (lab_cls, lab_box)
+                for lab_cls, cx, cy, w, h in labels
+                for lab_box in [(cx, cy, w, h)]
+                if iou_xywh(pred_box, lab_box) >= sc["iou_missing"]
+            ]
+            if not cands:
+                issues.append(Issue("second_opinion", WARN, "POSSIBLE_MISSING",
+                                    stem, "Model thấy vật chưa có nhãn",
+                                    extra={"conf": conf}))
+                continue
+
+            same = [(lab_cls, lab_box) for lab_cls, lab_box in cands if lab_cls == cls]
+            if same:
+                best_iou = max(iou_xywh(pred_box, lab_box) for _, lab_box in same)
+                if best_iou < sc["iou_loose"]:
+                    issues.append(Issue("second_opinion", WARN, "POSSIBLE_LOOSE_BOX",
+                                        stem, "Box nhãn lệch so với vật model thấy",
+                                        extra={"conf": conf, "iou": best_iou}))
+                continue
+
+            other = [(lab_cls, lab_box) for lab_cls, lab_box in cands if lab_cls != cls]
+            if other:
+                best_iou = max(iou_xywh(pred_box, lab_box) for _, lab_box in other)
+                if best_iou >= sc["iou_match"]:
+                    issues.append(Issue("second_opinion", WARN, "POSSIBLE_WRONG_CLASS",
+                                        stem, "Model dự đoán khác lớp với nhãn",
+                                        extra={"conf": conf, "iou": best_iou}))
+
+        label_lines = ds.read_label_lines(stem) or []
+        for line_no, text in label_lines:
+            try:
+                lab_cls, cx, cy, w, h = parse_yolo_line(text)
+            except ValueError:
+                continue
+            if not 0 <= lab_cls < len(ds.classes):
+                continue
+            lab_box = (cx, cy, w, h)
+            if not any(iou_xywh(lab_box, fp_box) >= sc["iou_missing"]
+                       for _, _, fp_box in fp_predictions):
+                issues.append(Issue("second_opinion", WARN, "POSSIBLE_FALSE_POS",
+                                    stem, "Không có dự đoán model nào phù hợp với box nhãn",
+                                    line_no, {"iou_threshold": sc["iou_missing"]}))
+
+    return issues

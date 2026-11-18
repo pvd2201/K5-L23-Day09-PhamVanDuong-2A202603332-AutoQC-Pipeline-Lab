@@ -35,5 +35,123 @@ from ..common import ERROR, parse_yolo_line  # noqa: F401
 
 
 def fix(ds, issues, cfg):
-    # TODO
-    raise NotImplementedError("autofix chưa làm")
+    fixes = []
+    error_issues = [i for i in issues if i.severity == ERROR]
+    if not error_issues:
+        return fixes
+
+    removed = {
+        i.image for i in error_issues
+        if i.code in {"DUP_IMAGE_EXACT", "DUP_IMAGE_PHASH", "LEAK_TEST", "CORRUPT_IMAGE", "BAD_SIZE"}
+    }
+
+    for stem in sorted(removed):
+        image_path = ds.image_path(stem)
+        label_path = ds.label_path(stem)
+        if image_path is not None and image_path.exists():
+            image_path.unlink()
+        if label_path.exists():
+            label_path.unlink()
+        fixes.append({
+            "image": stem,
+            "line": "",
+            "action": "remove_image",
+            "before": str(image_path) if image_path else stem,
+            "after": "(đã xoá)",
+        })
+
+    drop_codes = {"BAD_FORMAT", "BAD_CLASS_ID", "BOX_ZERO", "DUP_BOX"}
+    grouped = defaultdict(list)
+    for i in error_issues:
+        if i.image in removed:
+            continue
+        if i.code in drop_codes or i.code == "BOX_OUT_OF_IMAGE":
+            grouped[i.image].append(i)
+        elif i.code == "MISSING_LABEL_FILE":
+            fixes.append({
+                "image": i.image,
+                "line": "",
+                "action": "needs_label",
+                "before": "(không có file)",
+                "after": "chuyển người gán",
+            })
+        elif i.code == "BAD_CLASS_NAME":
+            if ds.yaml_path.exists():
+                data = yaml.safe_load(ds.yaml_path.read_text(encoding="utf-8")) or {}
+                data["names"] = list(cfg["classes"])
+                ds.yaml_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+                                        encoding="utf-8")
+            fixes.append({
+                "image": "data.yaml",
+                "line": "",
+                "action": "rename_classes",
+                "before": "names cũ",
+                "after": ",".join(cfg["classes"]),
+            })
+
+    for stem, stem_issues in grouped.items():
+        label_path = ds.label_path(stem)
+        if not label_path.exists():
+            continue
+
+        original = label_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        drop_lines = {i.line for i in stem_issues if i.code in drop_codes}
+        for i in stem_issues:
+            if i.code in drop_codes:
+                drop_lines.add(i.line)
+        clip_lines = {
+            i.line: i
+            for i in stem_issues
+            if i.code == "BOX_OUT_OF_IMAGE" and i.line not in drop_lines
+        }
+
+        affected_lines = sorted(set(drop_lines) | set(clip_lines), reverse=True)
+        for line_no in affected_lines:
+            idx = line_no - 1
+            if 0 <= idx < len(original):
+                before = original[idx]
+                if line_no in drop_lines:
+                    del original[idx]
+                    fixes.append({
+                        "image": stem,
+                        "line": line_no,
+                        "action": "drop_line",
+                        "before": before,
+                        "after": "(xoá dòng)",
+                    })
+                else:
+                    try:
+                        cls, cx, cy, w, h = parse_yolo_line(before)
+                    except ValueError:
+                        continue
+                    left = max(0.0, cx - w / 2)
+                    right = min(1.0, cx + w / 2)
+                    top = max(0.0, cy - h / 2)
+                    bottom = min(1.0, cy + h / 2)
+                    cw = right - left
+                    ch = bottom - top
+                    if cw <= 0 or ch <= 0:
+                        del original[idx]
+                        fixes.append({
+                            "image": stem,
+                            "line": line_no,
+                            "action": "drop_line",
+                            "before": before,
+                            "after": "(xoá dòng: box không còn diện tích)",
+                        })
+                    else:
+                        ncx = (left + right) / 2
+                        ncy = (top + bottom) / 2
+                        after = f"{cls} {ncx:.6g} {ncy:.6g} {cw:.6g} {ch:.6g}"
+                        original[idx] = after
+                        fixes.append({
+                            "image": stem,
+                            "line": line_no,
+                            "action": "clip_box",
+                            "before": before,
+                            "after": after,
+                        })
+
+        label_path.write_text("".join(line + "\n" for line in original), encoding="utf-8")
+
+    return fixes
